@@ -1,0 +1,183 @@
+#include <iostream>
+#include <string>
+#include <curl/curl.h>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
+using namespace std;
+
+// Callback function for cURL response
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, string* out) {
+    size_t totalSize = size * nmemb;
+    out->append((char*)contents, totalSize);
+    return totalSize;
+}
+
+// Function to fetch the current time in Italy from WorldTimeAPI
+string getTimeInItaly() {
+    string responseString;
+    CURL* curl = curl_easy_init();
+
+    if (curl) {
+        string url = "https://worldtimeapi.org/api/timezone/Europe/Rome";
+
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseString);
+
+        // Use a CA certificate bundle for SSL verification
+        curl_easy_setopt(curl, CURLOPT_CAINFO, "C:/2024_Fall/cit66_Cpp/chatBot01/cacert.pem");
+
+        CURLcode res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            cerr << "cURL error: " << curl_easy_strerror(res) << endl;
+        }
+
+        curl_easy_cleanup(curl);
+    }
+
+    if (responseString.empty()) {
+        return "Error: Could not fetch the time. Please try again later.";
+    }
+
+    // Parse the JSON response
+    try {
+        json jsonResponse = json::parse(responseString);
+        if (jsonResponse.contains("datetime")) {
+            return jsonResponse["datetime"];
+        }
+        else {
+            return "Error: Unexpected response format from WorldTimeAPI.";
+        }
+    }
+    catch (const json::exception& e) {
+        return "Error: Failed to parse response from WorldTimeAPI.";
+    }
+}
+
+// Function to send a message to OpenAI API
+string sendMessageToChatbot(const string& userMessage, const string& apiKey) {
+    string responseString;
+    CURL* curl = curl_easy_init();
+
+    if (curl) {
+        string url = "https://api.openai.com/v1/chat/completions";
+        string payload = R"({
+            "model": "gpt-3.5-turbo",
+            "messages": [{"role": "user", "content": ")" + userMessage + R"("}]
+        })";
+
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, ("Authorization: Bearer " + apiKey).c_str());
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &responseString);
+
+        // Use a CA certificate bundle for SSL verification
+        curl_easy_setopt(curl, CURLOPT_CAINFO, "C:/2024_Fall/cit66_Cpp/chatBot01/cacert.pem");
+
+        CURLcode res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            cerr << "cURL error: " << curl_easy_strerror(res) << endl;
+        }
+
+        curl_easy_cleanup(curl);
+        curl_slist_free_all(headers);
+    }
+
+    if (responseString.empty()) {
+        cerr << "Error: Empty response from API." << endl;
+        return "";
+    }
+
+    return responseString;
+}
+
+
+
+//API KEY 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
+int main() {
+    string apiKey = "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"; // WARNING: Replace before running
+    string userMessage;
+    string chatbotName = "Assistant";  // Default chatbot name
+    string userName = "User";          // Default user name
+    int exchangeCount = 0;
+    vector<pair<string, string>> conversationHistory;
+
+    cout << "Chatbot (type 'exit' to quit):\n";
+    while (true) {
+        cout << "> ";
+        getline(cin, userMessage);
+
+        if (userMessage == "exit") break;
+
+        // Handle name assignment
+        if (userMessage.find("Your name is now") != string::npos) {
+            size_t start = userMessage.find("Your name is now") + 17;
+            chatbotName = userMessage.substr(start);
+            chatbotName.erase(chatbotName.find_last_not_of(" \n\r\t") + 1);  // Trim whitespace
+            cout << "Bot: Okay, I will now call myself " << chatbotName << ". What else can I do for you?" << endl;
+            continue;
+        }
+        if (userMessage.find("my name is") != string::npos) {
+            size_t start = userMessage.find("my name is") + 10;
+            userName = userMessage.substr(start);
+            userName.erase(userName.find_last_not_of(" \n\r\t") + 1);  // Trim whitespace
+            cout << chatbotName << ": Nice to meet you, " << userName << "! How can I assist you today?" << endl;
+            continue;
+        }
+
+        // Handle time in Italy
+        if (userMessage.find("time in Italy") != string::npos) {
+            string timeInItaly = getTimeInItaly();
+            cout << chatbotName << ": The current time in Italy is: " << timeInItaly << "\n";
+
+            // Record exchange
+            exchangeCount++;
+            conversationHistory.emplace_back(userMessage, "The current time in Italy is: " + timeInItaly);
+        }
+        else {
+            // Send message to OpenAI API
+            string response = sendMessageToChatbot(userMessage, apiKey);
+
+            try {
+                json jsonResponse = json::parse(response);
+
+                if (jsonResponse.contains("choices") && !jsonResponse["choices"].empty()) {
+                    if (jsonResponse["choices"][0]["message"].contains("content")) {
+                        string chatbotReply = jsonResponse["choices"][0]["message"]["content"];
+                        cout << chatbotName << ": " << chatbotReply << "\n";
+
+                        // Record exchange
+                        exchangeCount++;
+                        conversationHistory.emplace_back(userMessage, chatbotReply);
+                    }
+                    else {
+                        cerr << chatbotName << ": Unexpected response structure.\n";
+                    }
+                }
+                else {
+                    cerr << chatbotName << ": Could not get a valid response from the server.\n";
+                }
+            }
+            catch (const json::exception& e) {
+                cerr << chatbotName << ": JSON parsing error: " << e.what() << "\n";
+            }
+        }
+
+        // Display exchange count and history
+        cout << "\n--- Exchange Count: " << exchangeCount << " ---\n";
+        cout << "--- Conversation History ---\n";
+        for (const auto& [userInput, botReply] : conversationHistory) {
+            cout << userName << ": " << userInput << "\n";
+            cout << chatbotName << ": " << botReply << "\n";
+        }
+        cout << "----------------------------\n\n";
+    }
+
+    return 0;
+}
